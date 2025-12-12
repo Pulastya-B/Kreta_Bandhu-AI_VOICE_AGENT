@@ -429,6 +429,7 @@ const AgentInterface: React.FC = () => {
   const connectionStateRef = useRef<ConnectionState>(ConnectionState.DISCONNECTED);
   const isBotSpeakingRef = useRef<boolean>(false); // Ref for tracking bot speaking state
   const cartItemsRef = useRef<CartItem[]>([]); // Ref for cart items (for tool access)
+  const isDisconnectingRef = useRef<boolean>(false); // Prevent multiple simultaneous disconnects
 
   const inputAudioContextRef = useRef<AudioContext | null>(null);
   const playbackAudioContextRef = useRef<AudioContext | null>(null); // Separate context for playback
@@ -1644,18 +1645,37 @@ const AgentInterface: React.FC = () => {
   };
 
   const disconnect = () => {
+    // Prevent multiple simultaneous disconnect calls
+    if (isDisconnectingRef.current) {
+      console.log('[Disconnect] Already disconnecting, skipping...');
+      return;
+    }
+    
+    isDisconnectingRef.current = true;
     console.log('[Disconnect] Starting cleanup...');
     
     // 1. Close session first (stops any incoming audio)
     if (sessionPromiseRef.current) {
-      sessionPromiseRef.current.then(session => {
+      const sessionPromise = sessionPromiseRef.current;
+      sessionPromiseRef.current = null; // Clear reference first to prevent multiple calls
+      
+      sessionPromise.then(session => {
         try {
-          session.close();
-        } catch (e) {
-          console.warn('[Disconnect] Session close error:', e);
+          // Check if session is still open before closing
+          if (session && typeof session.close === 'function') {
+            session.close();
+          }
+        } catch (e: any) {
+          // Silently ignore if already closed
+          if (e.message && !e.message.includes('CLOSING') && !e.message.includes('CLOSED')) {
+            console.warn('[Disconnect] Session close error:', e);
+          }
         }
-      }).catch(e => console.warn('[Disconnect] Session promise error:', e));
-      sessionPromiseRef.current = null;
+      }).catch((e: any) => {
+        if (e.message && !e.message.includes('CLOSING') && !e.message.includes('CLOSED')) {
+          console.warn('[Disconnect] Session promise error:', e);
+        }
+      });
     }
 
     // 2. Stop and disconnect input worklet
@@ -1724,6 +1744,11 @@ const AgentInterface: React.FC = () => {
     console.log('[Disconnect] Cleanup complete');
     updateConnectionState(ConnectionState.DISCONNECTED);
     setIsSynthesizing(false);
+    
+    // Reset disconnecting flag after a short delay
+    setTimeout(() => {
+      isDisconnectingRef.current = false;
+    }, 500);
   };
 
   const handleToggleConnection = () => {
