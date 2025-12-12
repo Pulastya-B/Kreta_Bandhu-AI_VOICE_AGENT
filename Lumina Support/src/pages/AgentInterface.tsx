@@ -789,7 +789,11 @@ const AgentInterface: React.FC = () => {
       mediaStreamRef.current = stream;
 
       // 4. Initialize Gemini Client
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const apiKey = import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.GEMINI_API_KEY;
+      if (!apiKey) {
+        throw new Error('Gemini API key not found. Please set VITE_GEMINI_API_KEY in your environment.');
+      }
+      const ai = new GoogleGenAI({ apiKey });
 
       // 5. Start Live Session
       const sessionPromise = ai.live.connect({
