@@ -813,9 +813,21 @@ const AgentInterface: React.FC = () => {
                   const inputData = message.data as Float32Array;
                   const pcmBlob = createBlob(inputData);
 
-                  if (sessionPromiseRef.current) {
+                  if (sessionPromiseRef.current && connectionStateRef.current === ConnectionState.CONNECTED) {
                     sessionPromiseRef.current.then((session) => {
-                      session.sendRealtimeInput({ media: pcmBlob });
+                      // Double-check connection state before sending
+                      if (connectionStateRef.current === ConnectionState.CONNECTED) {
+                        try {
+                          session.sendRealtimeInput({ media: pcmBlob });
+                        } catch (e: any) {
+                          // Silently ignore if session is closing
+                          if (!e.message?.includes('CLOSING') && !e.message?.includes('CLOSED')) {
+                            console.warn('[Audio] Send error:', e);
+                          }
+                        }
+                      }
+                    }).catch(() => {
+                      // Session promise rejected, ignore
                     });
                   }
                 } else {
@@ -823,9 +835,21 @@ const AgentInterface: React.FC = () => {
                   const inputData = e.data as Float32Array;
                   const pcmBlob = createBlob(inputData);
 
-                  if (sessionPromiseRef.current) {
+                  if (sessionPromiseRef.current && connectionStateRef.current === ConnectionState.CONNECTED) {
                     sessionPromiseRef.current.then((session) => {
-                      session.sendRealtimeInput({ media: pcmBlob });
+                      // Double-check connection state before sending
+                      if (connectionStateRef.current === ConnectionState.CONNECTED) {
+                        try {
+                          session.sendRealtimeInput({ media: pcmBlob });
+                        } catch (e: any) {
+                          // Silently ignore if session is closing
+                          if (!e.message?.includes('CLOSING') && !e.message?.includes('CLOSED')) {
+                            console.warn('[Audio] Send error:', e);
+                          }
+                        }
+                      }
+                    }).catch(() => {
+                      // Session promise rejected, ignore
                     });
                   }
                 }
