@@ -10,7 +10,8 @@
     "db": "node databaseServer.js",
     "db:postgres": "node databaseServerPostgres.js",
     "dev": "node --watch databaseServer.js",
-    "migrate": "node scripts/migrateToPostgres.js"
+    "migrate": "node scripts/migrateToPostgres.js",
+    "keep-alive": "node keep-alive.js"
   },
   "keywords": [
     "voice-agent",
