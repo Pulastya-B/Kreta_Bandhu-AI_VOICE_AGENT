@@ -995,7 +995,7 @@ const AgentInterface: React.FC = () => {
                     const controller = new AbortController();
                     const timeoutId = setTimeout(() => controller.abort(), 5000);
                     try {
-                      const response = await fetch(`/api/orders/${orderId}`, { signal: controller.signal });
+                      const response = await fetch(`${API_BASE_URL}/api/orders/${orderId}`, { signal: controller.signal });
                       result = await response.json();
                     } finally {
                       clearTimeout(timeoutId);
@@ -1005,7 +1005,7 @@ const AgentInterface: React.FC = () => {
                     const controller = new AbortController();
                     const timeoutId = setTimeout(() => controller.abort(), 5000);
                     try {
-                      const response = await fetch('/api/orders', {
+                      const response = await fetch(`${API_BASE_URL}/api/orders`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(args),
@@ -1021,7 +1021,7 @@ const AgentInterface: React.FC = () => {
                     const controller = new AbortController();
                     const timeoutId = setTimeout(() => controller.abort(), 5000);
                     try {
-                      const response = await fetch(`/api/orders/${orderId}/cancel`, { method: 'POST', signal: controller.signal });
+                      const response = await fetch(`${API_BASE_URL}/api/orders/${orderId}/cancel`, { method: 'POST', signal: controller.signal });
                       result = await response.json();
                     } finally {
                       clearTimeout(timeoutId);
@@ -1096,7 +1096,7 @@ const AgentInterface: React.FC = () => {
                     
                     const queryString = params.toString();
                     console.log(`[Tool] Checking stock with filters: ${queryString}`);
-                    const response = await fetch(`/api/products${queryString ? '?' + queryString : ''}`);
+                    const response = await fetch(`${API_BASE_URL}/api/products${queryString ? '?' + queryString : ''}`);
                     const data = await response.json();
                     if (data.products && data.products.length > 0) {
                       result = { status: 'found', products: data.products };
@@ -1107,12 +1107,12 @@ const AgentInterface: React.FC = () => {
                   } else if (name === "check_refund_status") {
                     const orderId = (args as any).order_id;
                     console.log(`[Tool] Checking refund for ${orderId}...`);
-                    const response = await fetch(`/api/refunds/${orderId}`);
+                    const response = await fetch(`${API_BASE_URL}/api/refunds/${orderId}`);
                     result = await response.json();
                   } else if (name === "create_refund_request") {
                     const { order_id, reason } = args as any;
                     console.log(`[Tool] Creating refund for ${order_id}...`);
-                    const response = await fetch('/api/refunds', {
+                    const response = await fetch(`${API_BASE_URL}/api/refunds`, {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({ order_id, reason })
@@ -1121,7 +1121,7 @@ const AgentInterface: React.FC = () => {
                   } else if (name === "apply_discount") {
                     const { order_id, code } = args as any;
                     console.log(`[Tool] Applying discount ${code} to ${order_id}...`);
-                    const response = await fetch(`/api/orders/${order_id}/discount`, {
+                    const response = await fetch(`${API_BASE_URL}/api/orders/${order_id}/discount`, {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({ code })
@@ -1131,7 +1131,7 @@ const AgentInterface: React.FC = () => {
                     const orderId = (args as any).order_id;
                     console.log(`[Tool] Generating invoice for ${orderId}...`);
                     // For PDF, we handle it specially - open in new tab
-                    const response = await fetch(`/api/orders/${orderId}/invoice`);
+                    const response = await fetch(`${API_BASE_URL}/api/orders/${orderId}/invoice`);
                     if (response.ok) {
                       const blob = await response.blob();
                       const url = window.URL.createObjectURL(blob);
@@ -1143,7 +1143,7 @@ const AgentInterface: React.FC = () => {
                   } else if (name === "update_shipping_address") {
                     const { order_id, new_address } = args as any;
                     console.log(`[Tool] Updating address for ${order_id}...`);
-                    const response = await fetch(`/api/orders/${order_id}/address`, {
+                    const response = await fetch(`${API_BASE_URL}/api/orders/${order_id}/address`, {
                       method: 'PATCH',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({ address: new_address })
@@ -1152,7 +1152,7 @@ const AgentInterface: React.FC = () => {
                   } else if (name === "schedule_delivery") {
                     const { order_id, slot } = args as any;
                     console.log(`[Tool] Scheduling delivery for ${order_id}...`);
-                    const response = await fetch(`/api/orders/${order_id}/schedule`, {
+                    const response = await fetch(`${API_BASE_URL}/api/orders/${order_id}/schedule`, {
                       method: 'PATCH',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({ slot })
@@ -1160,7 +1160,7 @@ const AgentInterface: React.FC = () => {
                     result = await response.json();
                   } else if (name === "create_customer_profile") {
                     console.log(`[Tool] Creating profile...`, args);
-                    const response = await fetch('/api/customers', {
+                    const response = await fetch(`${API_BASE_URL}/api/customers`, {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify(args)
@@ -1172,11 +1172,11 @@ const AgentInterface: React.FC = () => {
                     const params = new URLSearchParams();
                     if (email) params.append('email', email);
                     if (name) params.append('name', name);
-                    const response = await fetch(`/api/customers?${params.toString()}`);
+                    const response = await fetch(`${API_BASE_URL}/api/customers?${params.toString()}`);
                     result = await response.json();
                   } else if (name === "submit_feedback") {
                     console.log(`[Tool] Submitting feedback...`, args);
-                    const response = await fetch('/api/feedback', {
+                    const response = await fetch(`${API_BASE_URL}/api/feedback`, {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify(args)
@@ -1184,27 +1184,27 @@ const AgentInterface: React.FC = () => {
                     result = await response.json();
                   } else if (name === "browse_categories") {
                     console.log(`[Tool] Fetching categories...`);
-                    const response = await fetch('/api/categories');
+                    const response = await fetch(`${API_BASE_URL}/api/categories`);
                     result = await response.json();
                   } else if (name === "browse_subcategories") {
                     const category = (args as any).category;
                     if (category) {
                       console.log(`[Tool] Fetching subcategories for ${category}...`);
                       // Get category ID first
-                      const catResponse = await fetch('/api/categories');
+                      const catResponse = await fetch(`${API_BASE_URL}/api/categories`);
                       const catData = await catResponse.json();
                       const matchedCat = catData.categories?.find((c: any) => 
                         c.name.toLowerCase().includes(category.toLowerCase())
                       );
                       if (matchedCat) {
-                        const response = await fetch(`/api/categories/${matchedCat.id}/subcategories`);
+                        const response = await fetch(`${API_BASE_URL}/api/categories/${matchedCat.id}/subcategories`);
                         result = await response.json();
                       } else {
                         result = { status: 'not_found', message: 'Category not found' };
                       }
                     } else {
                       console.log(`[Tool] Fetching all subcategories...`);
-                      const response = await fetch('/api/subcategories');
+                      const response = await fetch(`${API_BASE_URL}/api/subcategories`);
                       result = await response.json();
                     }
                   }
