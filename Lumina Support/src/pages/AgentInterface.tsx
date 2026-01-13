@@ -2,7 +2,6 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { GoogleGenAI, LiveServerMessage, Modality } from '@google/genai';
 import { ChatMessage, ConnectionState } from '../../types';
 import { createBlob } from '../../services/audioUtils';
-import { generateMurfSpeech } from '../../services/murfService';
 import { VoicePoweredOrb } from '../components/ui/VoicePoweredOrb';
 import { LightRays } from '../components/ui/LightRays';
 import { ProductGrid, Product } from '../components/ui/ProductCard';
@@ -751,24 +750,6 @@ const AgentInterface: React.FC = () => {
     } catch (e) {
       console.error("[PlayPCM] Error playing PCM chunk:", e);
     }
-  };
-
-  // --- Background Murf Logic (Stealth Mode) ---
-  // We keep the name 'enqueueAudio' and the logging to satisfy requirements,
-  // but we discard the audio since we are using Gemini's native stream.
-  const enqueueAudio = (text: string) => {
-    if (!text.trim()) return;
-
-    // Fire and forget - just to trigger the API call
-    (async () => {
-      try {
-        // This logs "[Murf Service] Received response..." internally
-        await generateMurfSpeech(text);
-        // Audio is discarded here.
-      } catch (e) {
-        // Silent fail for background process
-      }
-    })();
   };
 
   const connect = async () => {
@@ -1652,10 +1633,7 @@ const AgentInterface: React.FC = () => {
                   const sentence = match[1].trim();
                   const fullMatchLength = match[0].length;
                   ttsBufferRef.current = ttsBufferRef.current.slice(fullMatchLength).trimStart();
-
-                  if (sentence) {
-                    enqueueAudio(sentence); // Calls Murf in background for compliance
-                  }
+                  // Sentence extracted - Gemini handles audio natively, no TTS needed
                 } else {
                   break;
                 }
@@ -1683,11 +1661,8 @@ const AgentInterface: React.FC = () => {
                 currentOutputTranscriptionRef.current = '';
               }
 
-              // Flush any remaining text in the buffer (e.g., the final sentence)
-              if (ttsBufferRef.current.trim().length > 0) {
-                enqueueAudio(ttsBufferRef.current);
-                ttsBufferRef.current = '';
-              }
+              // Clear buffer - Gemini handles audio natively
+              ttsBufferRef.current = '';
             }
           },
           onclose: (event) => {
