@@ -21,20 +21,22 @@ const AboutDevs: React.FC = () => {
     {
       name: 'Pulastya',
       title: 'Full Stack Developer',
-      handle: 'pulastyabhagwat.linkedin',
+      handle: 'pulastyabhagwat',
       status: 'Building cool stuff',
       avatarUrl: '/images/pulastya.jpg',
       github: 'https://github.com/Pulastya-B',
-      linkedin: 'https://www.linkedin.com/in/pulastya-bhagwat/'
+      linkedin: 'https://www.linkedin.com/in/pulastya-bhagwat/',
+      email: 'pulastyabhagwat.linkedin@gmail.com'
     },
     {
       name: 'Mohit',
       title: 'Full Stack Developer',
-      handle: 'mohitkhalote68',
+      handle: 'mohitkhalote',
       status: 'Creating the future',
       avatarUrl: '/images/mohit.jpg',
       github: 'https://github.com/Surfing-Ninja',
-      linkedin: 'https://www.linkedin.com/in/mohit-khalote/'
+      linkedin: 'https://www.linkedin.com/in/mohit-khalote/',
+      email: 'mohitkhalote68@gmail.com'
     }
   ];
 
@@ -133,7 +135,7 @@ const AboutDevs: React.FC = () => {
                     <Linkedin className="w-5 h-5" />
                   </a>
                   <a
-                    href={`mailto:${dev.handle}@gmail.com`}
+                    href={`mailto:${dev.email}`}
                     className="p-3 rounded-full bg-black/50 backdrop-blur-sm border border-white/10 text-white/70 hover:bg-white/10 hover:border-white/30 hover:text-white hover:shadow-[0_0_20px_rgba(125,190,255,0.4)] transition-all duration-300"
                   >
                     <Mail className="w-5 h-5" />
