@@ -105,6 +105,39 @@
   body {
     @apply bg-charcoal-900 text-white font-sans overflow-x-hidden;
   }
+
+  /* Performance optimizations for mobile */
+  @media (max-width: 768px) {
+    * {
+      /* Disable smooth scrolling on mobile for better performance */
+      scroll-behavior: auto !important;
+    }
+    
+    /* Reduce animation complexity on mobile */
+    *[class*="animate-"],
+    *[class*="transition-"] {
+      animation-duration: 0.3s !important;
+      transition-duration: 0.3s !important;
+    }
+
+    /* Disable blur effects on mobile (expensive) */
+    *[class*="blur-"] {
+      filter: none !important;
+      backdrop-filter: none !important;
+    }
+
+    /* Disable complex shadows on mobile */
+    *[class*="shadow-"] {
+      box-shadow: none !important;
+    }
+  }
+
+  /* Hardware acceleration for animations */
+  *[class*="animate-"],
+  *[class*="transition-"] {
+    transform: translateZ(0);
+    will-change: transform;
+  }
 }
 
 /* Custom Scrollbar */

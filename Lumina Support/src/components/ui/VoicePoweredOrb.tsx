@@ -372,6 +372,12 @@ export const VoicePoweredOrb: FC<VoicePoweredOrbProps> = ({
     const container = ctnDom.current;
     if (!container) return;
 
+    // Detect mobile for performance optimization
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth < 768;
+    const targetFPS = isMobile ? 30 : 60; // Reduce frame rate on mobile
+    const frameInterval = 1000 / targetFPS;
+    let lastFrameTime = 0;
+
     let rendererInstance: Renderer | null = null;
     let glContext: OGLRenderingContext | null = null;
     let rafId: number;
@@ -381,8 +387,8 @@ export const VoicePoweredOrb: FC<VoicePoweredOrbProps> = ({
       rendererInstance = new Renderer({
         alpha: true,
         premultipliedAlpha: false,
-        antialias: true,
-        dpr: window.devicePixelRatio || 1
+        antialias: !isMobile, // Disable antialiasing on mobile for performance
+        dpr: isMobile ? 1 : (window.devicePixelRatio || 1) // Reduce pixel density on mobile
       });
       glContext = rendererInstance.gl;
       glContext.clearColor(0, 0, 0, 0);
@@ -459,6 +465,16 @@ export const VoicePoweredOrb: FC<VoicePoweredOrbProps> = ({
 
       const update = (t: number) => {
         rafId = requestAnimationFrame(update);
+        
+        // Throttle frame rate on mobile
+        if (isMobile) {
+          const elapsed = t - lastFrameTime;
+          if (elapsed < frameInterval) {
+            return; // Skip this frame
+          }
+          lastFrameTime = t - (elapsed % frameInterval);
+        }
+        
         if (!program) return;
 
         const dt = (t - lastTime) * 0.001;
@@ -466,7 +482,7 @@ export const VoicePoweredOrb: FC<VoicePoweredOrbProps> = ({
         program.uniforms.iTime.value = t * 0.001;
         program.uniforms.hue.value = hue;
 
-        // Handle voice input
+        // Handle voice input - skip analysis every other frame on mobile
         if (enableVoiceControl && isMicrophoneInitialized) {
           voiceLevel = analyzeAudio();
 

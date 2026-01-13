@@ -424,6 +424,7 @@ const AgentInterface: React.FC = () => {
   const [isCartOpen, setIsCartOpen] = useState(false); // Cart visibility
   const [orderConfirmation, setOrderConfirmation] = useState<any>(null); // Order confirmation modal
   const [isCheckingOut, setIsCheckingOut] = useState(false); // Checkout loading state
+  const [isMobile, setIsMobile] = useState(false); // Mobile detection for performance
 
   // --- Refs for Audio & API ---
   const connectionStateRef = useRef<ConnectionState>(ConnectionState.DISCONNECTED);
@@ -608,6 +609,18 @@ const AgentInterface: React.FC = () => {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isSynthesizing]);
+
+  // Detect mobile devices for performance optimization
+  useEffect(() => {
+    const checkMobile = () => {
+      const mobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth < 768;
+      setIsMobile(mobile);
+      console.log('[Performance] Mobile detected:', mobile);
+    };
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -1957,12 +1970,14 @@ const AgentInterface: React.FC = () => {
           <div className="absolute w-[340px] h-[340px] rounded-full border border-copper-500/10 animate-pulse-slow" />
           <div className="absolute w-[380px] h-[380px] rounded-full border border-copper-500/5" />
           
-          {/* Glow Effects Behind Orb */}
-          <div className={`absolute w-72 h-72 rounded-full transition-all duration-700 ${
-            connectionState === ConnectionState.CONNECTED 
-              ? 'bg-copper-500/25 blur-3xl scale-110' 
-              : 'bg-copper-500/10 blur-2xl scale-100'
-          }`} />
+          {/* Glow Effects Behind Orb - Simplified on mobile */}
+          {!isMobile && (
+            <div className={`absolute w-72 h-72 rounded-full transition-all duration-700 ${
+              connectionState === ConnectionState.CONNECTED 
+                ? 'bg-copper-500/25 blur-3xl scale-110' 
+                : 'bg-copper-500/10 blur-2xl scale-100'
+            }`} />
+          )}
 
           {/* Voice Powered Orb - Clickable with mic icon */}
           <button 
@@ -1970,10 +1985,10 @@ const AgentInterface: React.FC = () => {
             className="w-80 h-80 relative cursor-pointer group"
           >
             <VoicePoweredOrb 
-              enableVoiceControl={connectionState === ConnectionState.CONNECTED}
-              voiceSensitivity={2.0}
-              maxRotationSpeed={1.5}
-              maxHoverIntensity={0.9}
+              enableVoiceControl={connectionState === ConnectionState.CONNECTED && !isMobile}
+              voiceSensitivity={isMobile ? 1.0 : 2.0}
+              maxRotationSpeed={isMobile ? 0.5 : 1.5}
+              maxHoverIntensity={isMobile ? 0.3 : 0.9}
               className="rounded-full overflow-hidden"
             />
             
