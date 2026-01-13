@@ -17,6 +17,8 @@ app.use(cors({
     origin: [
         'http://localhost:3000',
         'http://localhost:5173',
+        'https://kreta-bandhu.vercel.app',  // Production frontend
+        /\.vercel\.app$/,  // Allow all Vercel deployments
         /\.onrender\.com$/  // Allow all Render deployments
     ],
     credentials: true

@@ -2,7 +2,6 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { GoogleGenAI, LiveServerMessage, Modality } from '@google/genai';
 import { ChatMessage, ConnectionState } from '../../types';
 import { createBlob } from '../../services/audioUtils';
-import { generateMurfSpeech } from '../../services/murfService';
 import { VoicePoweredOrb } from '../components/ui/VoicePoweredOrb';
 import { LightRays } from '../components/ui/LightRays';
 import { ProductGrid, Product } from '../components/ui/ProductCard';
@@ -424,11 +423,14 @@ const AgentInterface: React.FC = () => {
   const [isCartOpen, setIsCartOpen] = useState(false); // Cart visibility
   const [orderConfirmation, setOrderConfirmation] = useState<any>(null); // Order confirmation modal
   const [isCheckingOut, setIsCheckingOut] = useState(false); // Checkout loading state
+  const [isMobile, setIsMobile] = useState(false); // Mobile detection for performance
 
   // --- Refs for Audio & API ---
   const connectionStateRef = useRef<ConnectionState>(ConnectionState.DISCONNECTED);
   const isBotSpeakingRef = useRef<boolean>(false); // Ref for tracking bot speaking state
   const cartItemsRef = useRef<CartItem[]>([]); // Ref for cart items (for tool access)
+  const isDisconnectingRef = useRef<boolean>(false); // Prevent multiple simultaneous disconnects
+  const isMountedRef = useRef<boolean>(false); // Prevent React StrictMode double-mount issues
 
   const inputAudioContextRef = useRef<AudioContext | null>(null);
   const playbackAudioContextRef = useRef<AudioContext | null>(null); // Separate context for playback
@@ -607,9 +609,27 @@ const AgentInterface: React.FC = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isSynthesizing]);
 
+  // Detect mobile devices for performance optimization
+  useEffect(() => {
+    const checkMobile = () => {
+      const mobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth < 768;
+      setIsMobile(mobile);
+      console.log('[Performance] Mobile detected:', mobile);
+    };
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
+
   // Cleanup on unmount
   useEffect(() => {
+    // Mark component as mounted
+    isMountedRef.current = true;
+    console.log('[Component] Mounted - isMountedRef set to true');
+    
     return () => {
+      console.log('[Component] Unmounting - calling disconnect');
+      isMountedRef.current = false;
       disconnect();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -732,28 +752,26 @@ const AgentInterface: React.FC = () => {
     }
   };
 
-  // --- Background Murf Logic (Stealth Mode) ---
-  // We keep the name 'enqueueAudio' and the logging to satisfy requirements,
-  // but we discard the audio since we are using Gemini's native stream.
-  const enqueueAudio = (text: string) => {
-    if (!text.trim()) return;
-
-    // Fire and forget - just to trigger the API call
-    (async () => {
-      try {
-        // This logs "[Murf Service] Received response..." internally
-        await generateMurfSpeech(text);
-        // Audio is discarded here.
-      } catch (e) {
-        // Silent fail for background process
-      }
-    })();
-  };
-
   const connect = async () => {
+    console.log('[Connect] ========== STARTING CONNECTION ==========');
+    
+    // Prevent connection if component is unmounting (StrictMode cleanup)
+    if (!isMountedRef.current) {
+      console.log('[Connect] Component not mounted, aborting connection');
+      return;
+    }
+    
+    // Prevent multiple simultaneous connections
+    if (connectionStateRef.current === ConnectionState.CONNECTING || 
+        connectionStateRef.current === ConnectionState.CONNECTED) {
+      console.log('[Connect] Already connecting/connected, aborting');
+      return;
+    }
+    
     try {
       updateConnectionState(ConnectionState.CONNECTING);
       setError(null);
+      console.log('[Connect] State updated to CONNECTING');
 
       // Reset audio scheduling state
       nextPlayTimeRef.current = 0;
@@ -765,6 +783,7 @@ const AgentInterface: React.FC = () => {
       const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
       const inputCtx = new AudioContextClass({ sampleRate: 16000 });
       inputAudioContextRef.current = inputCtx;
+      console.log('[Connect] Input audio context created');
 
       // 1b. Initialize Playback Audio Context (System Default Rate)
       // IMPORTANT: Create fresh context and ensure it's running
@@ -782,29 +801,48 @@ const AgentInterface: React.FC = () => {
       const blob = new Blob([WORKLET_CODE], { type: 'application/javascript' });
       const workletUrl = URL.createObjectURL(blob);
       await inputCtx.audioWorklet.addModule(workletUrl);
+      console.log('[Connect] AudioWorklet loaded');
 
       // 3. Request Mic Permission
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       mediaStreamRef.current = stream;
+      console.log('[Connect] Microphone access granted');
 
       // 4. Initialize Gemini Client
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const apiKey = import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.GEMINI_API_KEY;
+      if (!apiKey) {
+        throw new Error('Gemini API key not found. Please set VITE_GEMINI_API_KEY in your environment.');
+      }
+      console.log('[Connect] Gemini API key loaded, key starts with:', apiKey.substring(0, 10) + '...');
+      const ai = new GoogleGenAI({ apiKey });
+      console.log('[Connect] GoogleGenAI client initialized');
 
       // 5. Start Live Session
+      console.log('[Connect] Initiating Gemini Live session connection...');
       const sessionPromise = ai.live.connect({
         model: MODEL_NAME,
 
         callbacks: {
           onopen: () => {
+            console.log('[Session] ========== ONOPEN FIRED ==========');
+            console.log('[Session] Connection state before ONOPEN:', connectionStateRef.current);
             console.log('Gemini Live Session Opened');
             updateConnectionState(ConnectionState.CONNECTED);
+            console.log('[Session] Connection state after update:', connectionStateRef.current);
 
             // Setup Input Streaming via AudioWorklet
             if (inputAudioContextRef.current && mediaStreamRef.current) {
+              console.log('[Session] Setting up audio worklet...');
               const source = inputAudioContextRef.current.createMediaStreamSource(mediaStreamRef.current);
               const workletNode = new AudioWorkletNode(inputAudioContextRef.current, 'pcm-processor');
+              console.log('[Session] Audio worklet node created');
 
               workletNode.port.onmessage = (e) => {
+                // First check: If not connected, don't even process the message
+                if (connectionStateRef.current !== ConnectionState.CONNECTED) {
+                  return; // Early exit - don't process audio if not connected
+                }
+                
                 const message = e.data;
                 
                 // Send audio data to Gemini - let Gemini handle VAD natively
@@ -812,9 +850,21 @@ const AgentInterface: React.FC = () => {
                   const inputData = message.data as Float32Array;
                   const pcmBlob = createBlob(inputData);
 
-                  if (sessionPromiseRef.current) {
+                  if (sessionPromiseRef.current && connectionStateRef.current === ConnectionState.CONNECTED) {
                     sessionPromiseRef.current.then((session) => {
-                      session.sendRealtimeInput({ media: pcmBlob });
+                      // Double-check connection state before sending
+                      if (connectionStateRef.current === ConnectionState.CONNECTED) {
+                        try {
+                          session.sendRealtimeInput({ media: pcmBlob });
+                        } catch (e: any) {
+                          // Silently ignore if session is closing
+                          if (!e.message?.includes('CLOSING') && !e.message?.includes('CLOSED')) {
+                            console.warn('[Audio] Send error:', e);
+                          }
+                        }
+                      }
+                    }).catch(() => {
+                      // Session promise rejected, ignore
                     });
                   }
                 } else {
@@ -822,9 +872,21 @@ const AgentInterface: React.FC = () => {
                   const inputData = e.data as Float32Array;
                   const pcmBlob = createBlob(inputData);
 
-                  if (sessionPromiseRef.current) {
+                  if (sessionPromiseRef.current && connectionStateRef.current === ConnectionState.CONNECTED) {
                     sessionPromiseRef.current.then((session) => {
-                      session.sendRealtimeInput({ media: pcmBlob });
+                      // Double-check connection state before sending
+                      if (connectionStateRef.current === ConnectionState.CONNECTED) {
+                        try {
+                          session.sendRealtimeInput({ media: pcmBlob });
+                        } catch (e: any) {
+                          // Silently ignore if session is closing
+                          if (!e.message?.includes('CLOSING') && !e.message?.includes('CLOSED')) {
+                            console.warn('[Audio] Send error:', e);
+                          }
+                        }
+                      }
+                    }).catch(() => {
+                      // Session promise rejected, ignore
                     });
                   }
                 }
@@ -833,7 +895,11 @@ const AgentInterface: React.FC = () => {
               source.connect(workletNode);
               workletNode.connect(inputAudioContextRef.current.destination); // Connect to dest to keep active
               inputWorkletNodeRef.current = workletNode;
+              console.log('[Session] Audio worklet fully connected and ready');
+            } else {
+              console.warn('[Session] Could not set up worklet - missing audio context or stream');
             }
+            console.log('[Session] ========== ONOPEN COMPLETE ==========');
           },
           onmessage: async (message: LiveServerMessage) => {
             console.log('Raw Server Message:', JSON.stringify(message));
@@ -923,7 +989,7 @@ const AgentInterface: React.FC = () => {
                     const controller = new AbortController();
                     const timeoutId = setTimeout(() => controller.abort(), 5000);
                     try {
-                      const response = await fetch(`/api/orders/${orderId}`, { signal: controller.signal });
+                      const response = await fetch(`${API_BASE_URL}/api/orders/${orderId}`, { signal: controller.signal });
                       result = await response.json();
                     } finally {
                       clearTimeout(timeoutId);
@@ -933,7 +999,7 @@ const AgentInterface: React.FC = () => {
                     const controller = new AbortController();
                     const timeoutId = setTimeout(() => controller.abort(), 5000);
                     try {
-                      const response = await fetch('/api/orders', {
+                      const response = await fetch(`${API_BASE_URL}/api/orders`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(args),
@@ -949,7 +1015,7 @@ const AgentInterface: React.FC = () => {
                     const controller = new AbortController();
                     const timeoutId = setTimeout(() => controller.abort(), 5000);
                     try {
-                      const response = await fetch(`/api/orders/${orderId}/cancel`, { method: 'POST', signal: controller.signal });
+                      const response = await fetch(`${API_BASE_URL}/api/orders/${orderId}/cancel`, { method: 'POST', signal: controller.signal });
                       result = await response.json();
                     } finally {
                       clearTimeout(timeoutId);
@@ -1024,7 +1090,7 @@ const AgentInterface: React.FC = () => {
                     
                     const queryString = params.toString();
                     console.log(`[Tool] Checking stock with filters: ${queryString}`);
-                    const response = await fetch(`/api/products${queryString ? '?' + queryString : ''}`);
+                    const response = await fetch(`${API_BASE_URL}/api/products${queryString ? '?' + queryString : ''}`);
                     const data = await response.json();
                     if (data.products && data.products.length > 0) {
                       result = { status: 'found', products: data.products };
@@ -1035,12 +1101,12 @@ const AgentInterface: React.FC = () => {
                   } else if (name === "check_refund_status") {
                     const orderId = (args as any).order_id;
                     console.log(`[Tool] Checking refund for ${orderId}...`);
-                    const response = await fetch(`/api/refunds/${orderId}`);
+                    const response = await fetch(`${API_BASE_URL}/api/refunds/${orderId}`);
                     result = await response.json();
                   } else if (name === "create_refund_request") {
                     const { order_id, reason } = args as any;
                     console.log(`[Tool] Creating refund for ${order_id}...`);
-                    const response = await fetch('/api/refunds', {
+                    const response = await fetch(`${API_BASE_URL}/api/refunds`, {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({ order_id, reason })
@@ -1049,7 +1115,7 @@ const AgentInterface: React.FC = () => {
                   } else if (name === "apply_discount") {
                     const { order_id, code } = args as any;
                     console.log(`[Tool] Applying discount ${code} to ${order_id}...`);
-                    const response = await fetch(`/api/orders/${order_id}/discount`, {
+                    const response = await fetch(`${API_BASE_URL}/api/orders/${order_id}/discount`, {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({ code })
@@ -1059,7 +1125,7 @@ const AgentInterface: React.FC = () => {
                     const orderId = (args as any).order_id;
                     console.log(`[Tool] Generating invoice for ${orderId}...`);
                     // For PDF, we handle it specially - open in new tab
-                    const response = await fetch(`/api/orders/${orderId}/invoice`);
+                    const response = await fetch(`${API_BASE_URL}/api/orders/${orderId}/invoice`);
                     if (response.ok) {
                       const blob = await response.blob();
                       const url = window.URL.createObjectURL(blob);
@@ -1071,7 +1137,7 @@ const AgentInterface: React.FC = () => {
                   } else if (name === "update_shipping_address") {
                     const { order_id, new_address } = args as any;
                     console.log(`[Tool] Updating address for ${order_id}...`);
-                    const response = await fetch(`/api/orders/${order_id}/address`, {
+                    const response = await fetch(`${API_BASE_URL}/api/orders/${order_id}/address`, {
                       method: 'PATCH',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({ address: new_address })
@@ -1080,7 +1146,7 @@ const AgentInterface: React.FC = () => {
                   } else if (name === "schedule_delivery") {
                     const { order_id, slot } = args as any;
                     console.log(`[Tool] Scheduling delivery for ${order_id}...`);
-                    const response = await fetch(`/api/orders/${order_id}/schedule`, {
+                    const response = await fetch(`${API_BASE_URL}/api/orders/${order_id}/schedule`, {
                       method: 'PATCH',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({ slot })
@@ -1088,7 +1154,7 @@ const AgentInterface: React.FC = () => {
                     result = await response.json();
                   } else if (name === "create_customer_profile") {
                     console.log(`[Tool] Creating profile...`, args);
-                    const response = await fetch('/api/customers', {
+                    const response = await fetch(`${API_BASE_URL}/api/customers`, {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify(args)
@@ -1100,11 +1166,11 @@ const AgentInterface: React.FC = () => {
                     const params = new URLSearchParams();
                     if (email) params.append('email', email);
                     if (name) params.append('name', name);
-                    const response = await fetch(`/api/customers?${params.toString()}`);
+                    const response = await fetch(`${API_BASE_URL}/api/customers?${params.toString()}`);
                     result = await response.json();
                   } else if (name === "submit_feedback") {
                     console.log(`[Tool] Submitting feedback...`, args);
-                    const response = await fetch('/api/feedback', {
+                    const response = await fetch(`${API_BASE_URL}/api/feedback`, {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify(args)
@@ -1112,27 +1178,27 @@ const AgentInterface: React.FC = () => {
                     result = await response.json();
                   } else if (name === "browse_categories") {
                     console.log(`[Tool] Fetching categories...`);
-                    const response = await fetch('/api/categories');
+                    const response = await fetch(`${API_BASE_URL}/api/categories`);
                     result = await response.json();
                   } else if (name === "browse_subcategories") {
                     const category = (args as any).category;
                     if (category) {
                       console.log(`[Tool] Fetching subcategories for ${category}...`);
                       // Get category ID first
-                      const catResponse = await fetch('/api/categories');
+                      const catResponse = await fetch(`${API_BASE_URL}/api/categories`);
                       const catData = await catResponse.json();
                       const matchedCat = catData.categories?.find((c: any) => 
                         c.name.toLowerCase().includes(category.toLowerCase())
                       );
                       if (matchedCat) {
-                        const response = await fetch(`/api/categories/${matchedCat.id}/subcategories`);
+                        const response = await fetch(`${API_BASE_URL}/api/categories/${matchedCat.id}/subcategories`);
                         result = await response.json();
                       } else {
                         result = { status: 'not_found', message: 'Category not found' };
                       }
                     } else {
                       console.log(`[Tool] Fetching all subcategories...`);
-                      const response = await fetch('/api/subcategories');
+                      const response = await fetch(`${API_BASE_URL}/api/subcategories`);
                       result = await response.json();
                     }
                   }
@@ -1567,10 +1633,7 @@ const AgentInterface: React.FC = () => {
                   const sentence = match[1].trim();
                   const fullMatchLength = match[0].length;
                   ttsBufferRef.current = ttsBufferRef.current.slice(fullMatchLength).trimStart();
-
-                  if (sentence) {
-                    enqueueAudio(sentence); // Calls Murf in background for compliance
-                  }
+                  // Sentence extracted - Gemini handles audio natively, no TTS needed
                 } else {
                   break;
                 }
@@ -1598,23 +1661,55 @@ const AgentInterface: React.FC = () => {
                 currentOutputTranscriptionRef.current = '';
               }
 
-              // Flush any remaining text in the buffer (e.g., the final sentence)
-              if (ttsBufferRef.current.trim().length > 0) {
-                enqueueAudio(ttsBufferRef.current);
-                ttsBufferRef.current = '';
-              }
+              // Clear buffer - Gemini handles audio natively
+              ttsBufferRef.current = '';
             }
           },
-          onclose: () => {
-            console.log('Session closed');
+          onclose: (event) => {
+            console.log('[Session] ========== ONCLOSE FIRED ==========');
+            console.log('[Session] Close event:', event);
+            console.log('[Session] Close code:', event?.code);
+            console.log('[Session] Close reason:', event?.reason || '(no reason provided)');
+            console.log('[Session] Close wasClean:', event?.wasClean);
+            console.log('[Session] Connection state at close:', connectionStateRef.current);
+            
+            // Stop worklet immediately
+            if (inputWorkletNodeRef.current) {
+              console.log('[Session] Disconnecting worklet due to session close');
+              try {
+                inputWorkletNodeRef.current.disconnect();
+                inputWorkletNodeRef.current = null;
+              } catch (e) {
+                console.warn('[Session Close] Worklet disconnect error:', e);
+              }
+            }
+            
             updateConnectionState(ConnectionState.DISCONNECTED);
             setIsSynthesizing(false);
+            console.log('[Session] ========== ONCLOSE COMPLETE ==========');
           },
           onerror: (err) => {
-            console.error('Session error:', err);
-            setError("Connection encountered an error.");
+            console.log('[Session] ========== ONERROR FIRED ==========');
+            console.error('[Session] Error details:', err);
+            console.error('[Session] Error message:', err.message);
+            console.error('[Session] Error type:', err.type);
+            console.error('[Session] Error object:', JSON.stringify(err, Object.getOwnPropertyNames(err), 2));
+            
+            // Stop worklet on error
+            if (inputWorkletNodeRef.current) {
+              console.log('[Session] Disconnecting worklet due to error');
+              try {
+                inputWorkletNodeRef.current.disconnect();
+                inputWorkletNodeRef.current = null;
+              } catch (e) {
+                console.warn('[Session Error] Worklet disconnect error:', e);
+              }
+            }
+            
+            setError(`Connection error: ${err.message || 'Unknown error'}`);
             updateConnectionState(ConnectionState.ERROR);
             setIsSynthesizing(false);
+            console.log('[Session] ========== ONERROR COMPLETE ==========');
           }
         },
         config: {
@@ -1633,10 +1728,15 @@ const AgentInterface: React.FC = () => {
         }
       });
 
+      console.log('[Connect] Session promise created, storing reference...');
       sessionPromiseRef.current = sessionPromise;
+      console.log('[Connect] Waiting for session to connect...');
 
     } catch (e: any) {
+      console.error('[Connect] ========== CONNECTION FAILED ==========');
       console.error(e);
+      console.error('[Connect] Error message:', e.message);
+      console.error('[Connect] Error stack:', e.stack);
       updateConnectionState(ConnectionState.ERROR);
       setError(`Failed to initialize: ${e.message}`);
       setIsSynthesizing(false);
@@ -1644,18 +1744,45 @@ const AgentInterface: React.FC = () => {
   };
 
   const disconnect = () => {
+    console.log('[Disconnect] Called - isMountedRef:', isMountedRef.current, 'isDisconnectingRef:', isDisconnectingRef.current);
+    
+    // Prevent multiple simultaneous disconnect calls
+    if (isDisconnectingRef.current) {
+      console.log('[Disconnect] Already disconnecting, skipping...');
+      return;
+    }
+    
+    // Allow disconnect even if unmounted (for cleanup)
+    // but log it for debugging
+    if (!isMountedRef.current) {
+      console.log('[Disconnect] Component unmounted, proceeding with cleanup...');
+    }
+    
+    isDisconnectingRef.current = true;
     console.log('[Disconnect] Starting cleanup...');
     
     // 1. Close session first (stops any incoming audio)
     if (sessionPromiseRef.current) {
-      sessionPromiseRef.current.then(session => {
+      const sessionPromise = sessionPromiseRef.current;
+      sessionPromiseRef.current = null; // Clear reference first to prevent multiple calls
+      
+      sessionPromise.then(session => {
         try {
-          session.close();
-        } catch (e) {
-          console.warn('[Disconnect] Session close error:', e);
+          // Check if session is still open before closing
+          if (session && typeof session.close === 'function') {
+            session.close();
+          }
+        } catch (e: any) {
+          // Silently ignore if already closed
+          if (e.message && !e.message.includes('CLOSING') && !e.message.includes('CLOSED')) {
+            console.warn('[Disconnect] Session close error:', e);
+          }
         }
-      }).catch(e => console.warn('[Disconnect] Session promise error:', e));
-      sessionPromiseRef.current = null;
+      }).catch((e: any) => {
+        if (e.message && !e.message.includes('CLOSING') && !e.message.includes('CLOSED')) {
+          console.warn('[Disconnect] Session promise error:', e);
+        }
+      });
     }
 
     // 2. Stop and disconnect input worklet
@@ -1724,6 +1851,11 @@ const AgentInterface: React.FC = () => {
     console.log('[Disconnect] Cleanup complete');
     updateConnectionState(ConnectionState.DISCONNECTED);
     setIsSynthesizing(false);
+    
+    // Reset disconnecting flag after a short delay
+    setTimeout(() => {
+      isDisconnectingRef.current = false;
+    }, 500);
   };
 
   const handleToggleConnection = () => {
@@ -1813,12 +1945,14 @@ const AgentInterface: React.FC = () => {
           <div className="absolute w-[340px] h-[340px] rounded-full border border-copper-500/10 animate-pulse-slow" />
           <div className="absolute w-[380px] h-[380px] rounded-full border border-copper-500/5" />
           
-          {/* Glow Effects Behind Orb */}
-          <div className={`absolute w-72 h-72 rounded-full transition-all duration-700 ${
-            connectionState === ConnectionState.CONNECTED 
-              ? 'bg-copper-500/25 blur-3xl scale-110' 
-              : 'bg-copper-500/10 blur-2xl scale-100'
-          }`} />
+          {/* Glow Effects Behind Orb - Simplified on mobile */}
+          {!isMobile && (
+            <div className={`absolute w-72 h-72 rounded-full transition-all duration-700 ${
+              connectionState === ConnectionState.CONNECTED 
+                ? 'bg-copper-500/25 blur-3xl scale-110' 
+                : 'bg-copper-500/10 blur-2xl scale-100'
+            }`} />
+          )}
 
           {/* Voice Powered Orb - Clickable with mic icon */}
           <button 
@@ -1826,10 +1960,10 @@ const AgentInterface: React.FC = () => {
             className="w-80 h-80 relative cursor-pointer group"
           >
             <VoicePoweredOrb 
-              enableVoiceControl={connectionState === ConnectionState.CONNECTED}
-              voiceSensitivity={2.0}
-              maxRotationSpeed={1.5}
-              maxHoverIntensity={0.9}
+              enableVoiceControl={connectionState === ConnectionState.CONNECTED && !isMobile}
+              voiceSensitivity={isMobile ? 1.0 : 2.0}
+              maxRotationSpeed={isMobile ? 0.5 : 1.5}
+              maxHoverIntensity={isMobile ? 0.3 : 0.9}
               className="rounded-full overflow-hidden"
             />
             
